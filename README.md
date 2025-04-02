@@ -5,12 +5,16 @@ A simple container (like Docker) built from scratch using Go. This project explo
 ## 🚀 Features
 - Process isolation using Linux namespaces
 
-## 🗒️ Next Steps
-- Resource limits via cgroups
-- File system isolation with `chroot`
-- Custom image execution
-- Basic CLI interface
-- Play with user namespaces
+## 🗒️ Next Steps/TODO
+- [x] Resource limits via cgroups
+- [x] File system isolation with `chroot`
+- [ ] Implement these properties
+    - [ ] Network
+    - [ ] User IDs
+    - [ ] IPC
+- [ ] Custom image execution
+- [ ] Basic CLI interface
+- [ ] Play with user namespaces
 
 ## 🧠 Motivation
 
