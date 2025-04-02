@@ -3,11 +3,11 @@
 A simple container (like Docker) built from scratch using Go. This project explores containerization concepts such as namespaces, cgroups, and filesystem isolation, offering a lightweight and educational alternative to full-fledged container platforms.
 
 ## 🚀 Features
-- Process isolation using Linux namespaces
-
-## 🗒️ Next Steps/TODO
+- [x] Process isolation using Linux namespaces
 - [x] Resource limits via cgroups
 - [x] File system isolation with `chroot`
+
+## 🗒️ Next Steps/TODO
 - [ ] Implement these properties
     - [ ] Network
     - [ ] User IDs
