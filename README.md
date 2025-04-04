@@ -8,10 +8,12 @@ A simple container (like Docker) built from scratch using Go. This project explo
 - [x] File system isolation with `chroot`
 
 ## 🗒️ Next Steps/TODO
+- [ ] Rootless containers
 - [ ] Implement these properties
     - [ ] Network
     - [ ] User IDs
     - [ ] IPC
+- [ ] Graceful shutdown
 - [ ] Custom image execution
 - [ ] Basic CLI interface
 - [ ] Play with user namespaces
@@ -40,12 +42,18 @@ go build -o gocontainer
 
 ```bash
 sudo ./gocontainer run <command>
+# OR
+./rootless_container run <command>
 ```
 
 Example:
 
 ```bash
 sudo ./gocontainer run /bin/bash
+# OR
+make run # runs the first line in example
+# OR
+./rootless_container run /bin/bash
 ```
 
 This will spin up an isolated shell environment with process and filesystem isolation.
