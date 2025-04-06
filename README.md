@@ -6,17 +6,18 @@ A simple container (like Docker) built from scratch using Go. This project explo
 - [x] Process isolation using Linux namespaces
 - [x] Resource limits via cgroups
 - [x] File system isolation with `chroot`
+- [x] Rootless containers
+- [x] Graceful shutdown
 
 ## 🗒️ Next Steps/TODO
-- [ ] Rootless containers
 - [ ] Implement these properties
     - [ ] Network
     - [ ] User IDs
     - [ ] IPC
-- [ ] Graceful shutdown
 - [ ] Custom image execution
 - [ ] Basic CLI interface
 - [ ] Play with user namespaces
+- [ ] Handle other signals/interrupts
 
 ## 🧠 Motivation
 

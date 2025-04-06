@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 )
 
@@ -54,11 +55,25 @@ func run() {
 		},
 	}
 
+	// Spawn a separate goroutine that listens for signals (SIGINT/SIGTERM) to pass to child() process
+	// This ensures killing the main process (main()) will also force the child() to gracefully shutdown
+	go func() {
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		for sig := range sigs { // Blocking loop (in case someone spams ctrl+c)
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(sig)
+			}
+		}
+	}()
+
 	// Reinvoke same process in a new namespace (will run child() now)
 	if err := cmd.Run(); err != nil {
 		fmt.Printf("Error running command: %v\n", err)
 		os.Exit(1)
 	}
+
+	fmt.Printf("Container Wrapper has gracefully shutdown!\n")
 }
 
 func child() {
@@ -94,18 +109,41 @@ func child() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	// Reinvoke same process in a new namespace (created in run())
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error child running command: %v\n", err)
-		os.Exit(1)
+	// ANOTHER WAY OF DOING GRACEFUL SHUTDOWN (NOT THE MODERN WAY OF DOING IT)
+	// Create a channel for graceful shutdown -> though this is UNNECESSARY since its a single threaded program
+	// We can just use a simple if-statement instead
+	done := make(chan error, 1)
+	// Spawn a goroutine where cmd.Run() is a blocking call -> reinvoke same process with cmd.Run()
+	go func() {
+		done <- cmd.Run() // If this finishes, it will pass an error to the done channel
+	}()
+
+	// Create a channel to handle SIGINT and SIGTERM in main go program
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM) // relays SIGINT and SIGTERM to sigs channel
+
+	// Wait for bash in container to exit or wait for SIGINT/SIGTERM in main program
+	select {
+	case err := <-done:
+		fmt.Printf("Container exited: %v\n", err)
+	case sig := <-sigs:
+		fmt.Printf("SIGINT/SIGTERM received: %v\n", sig)
+		if cmd.Process != nil {
+			_ = cmd.Process.Signal(sig) // forward the signal to the bash command
+		}
+		<-done // wait for the container to actually exit (blocking)
 	}
 
 	// Cleanup
-	// We can use "/proc" in the target field
+	// Unmount the /proc pseudo-filesystem: we can use "/proc" in the target field
 	if err := syscall.Unmount("proc", 0); err != nil {
 		log.Fatalf("/proc unmount failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	fmt.Printf("Container and program has gracefully shutdown!\n")
+
+	// Exit from child process and return to run()
 }
 
 func must(err error) {
