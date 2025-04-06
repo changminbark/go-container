@@ -15,9 +15,10 @@ A simple container (like Docker) built from scratch using Go. This project explo
     - [ ] User IDs
     - [ ] IPC
 - [ ] Custom image execution
-- [ ] Basic CLI interface
 - [ ] Play with user namespaces
-- [ ] Handle other signals/interrupts
+- [ ] Handle other signals/interrupts (develop more container runtime feats)
+- [ ] Create simple container orchestration
+    - [ ] Basic CLI interface
 
 ## 🧠 Motivation
 
