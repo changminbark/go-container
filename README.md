@@ -39,6 +39,10 @@ go build -o gocontainer
 ```
 
 **Make sure to create a /home/${NAME}/Containers/go-container-ubuntufs directory.**
+This project used debootstrap to create the ubuntufs
+```bash
+sudo debootstrap focal ./go-container-ubuntufs http://archive.ubuntu.com/ubuntu/
+```
 
 ## 🧪 Usage
 

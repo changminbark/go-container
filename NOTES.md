@@ -53,6 +53,31 @@
     ```
     - We may also find a docker subdirectory in each of these cgroup parameters
 6. Similar to Docker, the Go Containers have the specific cgroup parameters set in each of the ${GO CONTAINER} subdirectory in a ${SPECIFIC CGROUP} directory.
+7. We use the underlying clone() syscall instead of fork() as clone() gives more control over the resources that are shared between parent and child, such as memory space, file system, file descriptors, signal handlers, thread groups (used to create threads), and namespaces (using CLONE_NEW flags).
+8. Rootless containers are containers that have the entire container runtime as well as the containers themselves not have access to root privileges. 
+    - The container's view of the user id will be different from the host's view of the user id. 
+    - Running
+    ```bash
+    ps
+    ```
+    as the root user will show the rootless container being run by a user that is not root (such as chang-min) even though the user inside the rootless container has the user name/id of root. Running the regular gocontainer will show that the container is being run by root.
+9. Network namespaces also isolate the network resources (connections, network interfaces like host's eth0, routes, DNS, IP addresses, etc.)
+    - We can check for the new network namespace by using
+    ```bash
+    cat /proc/self/net/tcp
+    ```
+    in the container
+    - We can also use
+    ```bash
+    ls -l /proc/${PID}/ns/net
+    ```
+    from the host/parent process.
+10. When you use CLONE_NEWPID, the PID namespace is only fully active for child processes of the process you created with clone().
+    - So if you start a process with CLONE_NEWPID, that process becomes PID 1 in the new namespace — but doesn’t itself experience full PID isolation behavior. We can still see the process on the host machine.
+    - That’s why you also need to spawn another child from within that process. That child will have:
+        - PID ≠ 1 in the new namespace
+        - Full namespace isolation (including network)
+
 
 
 ## Docker Containers

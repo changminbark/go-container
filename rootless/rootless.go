@@ -11,7 +11,14 @@ import (
 
 // This is a rootless container implementation with NO limits on resources (kind of like running a regular process with no safeguards).
 // The other implementation has cgroups set up when running/initializing the container (writes to /sys/fs/cgroups virtual fs), which is why we need sudo.
+// The other implementation also does not need a new CLONE_NEWUSER because they already run as root
 func main() {
+	if len(os.Args) < 2 {
+		log.Fatalf("Usage: %s run <cmd> [args...]", os.Args[0])
+	}
+
+	fmt.Printf("Running a rootless container!\n")
+
 	switch os.Args[1] {
 	case "run":
 		run()

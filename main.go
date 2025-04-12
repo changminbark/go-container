@@ -20,13 +20,16 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		run()
-	case "child":
-		child()
+	case "bootstrap":
+		bootstrap()
+	case "container":
+		container()
 	default:
 		panic("Invalid command")
 	}
 }
 
+// Function that runs the wrapper for the container (sets up namespaces for CLONE)
 func run() {
 	fmt.Printf("Running %v as %d\n", os.Args[2:], os.Getpid())
 
@@ -34,8 +37,8 @@ func run() {
 	// Creates structure of command
 	// This creates a new *exec.Cmd object that re-executes the current binary
 	// "/proc/self/exe" refers to currently running executable and the second part is providing arguments for the new process (manually simulating fork and exec)
-	// “Run me again, but pass the argument "child" followed by the remaining original args starting from index 2 (after main.go + run).”
-	cmd := exec.Command("/proc/self/exe", append([]string{"child"}, os.Args[2:]...)...)
+	// “Run me again, but pass the argument "bootstrap" followed by the remaining original args starting from index 2 (after main.go + run).”
+	cmd := exec.Command("/proc/self/exe", append([]string{"bootstrap"}, os.Args[2:]...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -45,52 +48,64 @@ func run() {
 	// Also unshares any recursively inherited mount properties from host machine
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		// Cloneflags has logical OR to combine the different flags (used in C-style APIs)
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS,
-		// Cannot see container's proc mount in host (see notes)
-		Unshareflags: syscall.CLONE_NEWNS,
+		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
+		// Cannot see container's proc mount and network namespaces in host (see notes)
+		Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
 	}
 
-	// Spawn a separate goroutine that listens for signals (SIGINT/SIGTERM) to pass to child() process
-	// This ensures killing the main process (main()) will also force the child() to gracefully shutdown
-	go func() {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-		for sig := range sigs { // Blocking loop (in case someone spams ctrl+c)
-			if cmd.Process != nil {
-				_ = cmd.Process.Signal(sig)
-			}
-		}
-	}()
+	// This ensures killing the main process (main()) will also force the container() process to gracefully shutdown
+	passSignal(cmd)
 
-	// Reinvoke same process in a new namespace (will run child() now)
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error running command: %v\n", err)
+	// Reinvoke same process in a new namespace (will run container() now)
+	if err := cmd.Start(); err != nil {
+		log.Fatalf("Failed to start container environment: %v", err)
+	}
+
+	// Print the PID from the host's perspective
+	fmt.Printf("Container bootstrap PID on host machine: %d\n", cmd.Process.Pid)
+
+	// Wait after printing
+	if err := cmd.Wait(); err != nil {
+		log.Fatalf("Container process exited: %v", err)
 	}
 
 	fmt.Printf("Container Wrapper has gracefully shutdown!\n")
 }
 
-func child() {
-	// Set up context for receiving SIGINT and SIGTERM for "/proc/self/exe child /bin/bash"
+// Bootstrapper function that acts as the root process in the container (namespaces all work properly for children processes)
+func bootstrap() {
+	// Run the command as a new process in the container namespace
+	if os.Getpid() == 1 {
+		fmt.Printf("We are PID 1 in new PID namespace - now forking actual container process\n")
+		cmd := exec.Command("/proc/self/exe", append([]string{"container"}, os.Args[2:]...)...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		// Ensure that SIGINT and SIGTERM signals are passed to container() for graceful shutdown
+		passSignal(cmd)
+
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("Failed to exec container: %v", err)
+		}
+	}
+}
+
+// Function that actually runs the container command as a child process (namespaces set up properly)
+func container() {
+	// Set up context for receiving SIGINT and SIGTERM for "/proc/self/exe container /bin/bash"
 	// When this process receives a SIGINT/SIGTERM, it will pass SIGKILL to the bash command
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
 	defer stop()
 
-	fmt.Printf("Child running %v as %d\n", os.Args[2:], os.Getpid())
+	fmt.Printf("Container process running %v as %d\n", os.Args[2:], os.Getpid())
 
+	// Create cgroup pseudo-filesystem
 	if isCgroupV2() {
 		cg2()
 	} else {
 		cg1()
 	}
-
-	// Cleanup for control group creation
-	defer func() {
-		err := os.RemoveAll("/sys/fs/cgroup/gocontainer/")
-		if err != nil {
-			log.Printf("Warning: failed to clean up cgroup directory: %v\n", err)
-		}
-	}()
 
 	newRoot := "/home/chang-min/Containers/go-container-ubuntufs"
 
@@ -116,7 +131,16 @@ func child() {
 		os.Exit(1)
 	}
 
-	// This creates a command that will automatically terminate with a notify ctx to the goroutine calling child()
+	// Print out network namespace
+	link, _ := os.Readlink("/proc/self/ns/net")
+	fmt.Printf("Network namespace:%s\n", link)
+
+	// Sets loopback interface to up so that programs can use localhost
+	exec.Command("ip", "link", "set", "lo", "up").Run()
+	out, _ := exec.Command("ip", "addr").CombinedOutput()
+	fmt.Printf("ip addr CMD:\n%s\n", string(out))
+
+	// This creates a command that will automatically terminate with a notify ctx to the goroutine calling container()
 	cmd := exec.CommandContext(ctx, os.Args[2], os.Args[3:]...) // Need to unpack os.Args[3:], which is a slice, into variadic string parameters
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -137,15 +161,21 @@ func child() {
 	// Cleanup
 	// Unmount the /proc pseudo-filesystem: we can use "/proc" in the target field
 	if err := syscall.Unmount("proc", 0); err != nil {
-		log.Fatalf("/proc unmount failed: %v\n", err)
+		log.Printf("/proc unmount failed: %v\n", err)
+		os.Exit(1)
+	}
+	// Delete/unmount the /cgroup pseudo-filesystem for the container
+	if err := os.RemoveAll("/sys/fs/cgroup/gocontainer/"); err != nil {
+		log.Printf("Warning: failed to clean up cgroup directory: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Container has gracefully shutdown!\n")
 
-	// Runs stop() and then exit from child process/return to main process so run() can terminate
+	// Runs stop() and then exit from container process/return to main process so run() can terminate
 }
 
+// Function that checks for the version of Cgroup
 func isCgroupV2() bool {
 	statfs := syscall.Statfs_t{}
 	err := syscall.Statfs("/sys/fs/cgroup", &statfs)
@@ -187,6 +217,19 @@ func cg2() {
 	must(os.WriteFile(filepath.Join(containerCGroup, "pids.max"), []byte("20"), 0700), "Failed to write to cgroup")
 	// This adds the current process into the container cgroup
 	must(os.WriteFile(filepath.Join(containerCGroup, "cgroup.procs"), []byte(strconv.Itoa(os.Getpid())), 0700), "Failed to write to cgroup")
+}
+
+// Function that spawns a goroutine that listens (blocking) for signals (SIGINT/SIGTERM) to pass to cmd() process
+func passSignal(cmd *exec.Cmd) {
+	go func() {
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		for sig := range sigs { // Blocking loop (in case someone spams ctrl+c)
+			if cmd.Process != nil {
+				_ = cmd.Process.Signal(sig)
+			}
+		}
+	}()
 }
 
 func must(err error, msg ...string) {
