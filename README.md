@@ -48,6 +48,40 @@ This project used debootstrap to create the ubuntufs
 sudo debootstrap focal ./go-container-ubuntufs http://archive.ubuntu.com/ubuntu/
 ```
 
+**If networking inside the container does not work, make sure the following are set/run**
+
+### Packet Forwarding
+```bash
+sudo vim /etc/sysctl.conf 
+# Then add "net.ipv4.ip_forward = 1"
+```
+
+### NAT masquerading 
+```bash
+iptables -t nat -A POSTROUTING -s 192.168.100.0/24 -o ${host-net-iface} -j MASQUERADE
+# This is for your host machine to rewrite the container's IP to work with NAT
+```
+
+### IP Tables FORWARD Rules
+```bash
+sudo iptables -A FORWARD -i veth-host -o ${host-net-iface} -j ACCEPT
+sudo iptables -A FORWARD -o veth-host -i ${host-net-iface} -m state --state RELATED,ESTABLISHED -j ACCEPT
+# This allows for forwarding between veth and the host's net iface
+```
+
+Make it permanent using the following
+```bash
+sudo apt install iptables-persistent
+# Run configuration commands above
+sudo netfilter-persistent save
+```
+
+You can verify using
+```bash
+sudo iptables -t nat -L -v -n
+sudo iptables -L -v -n
+```
+
 ## 🧪 Usage
 
 ```bash

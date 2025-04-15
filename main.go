@@ -33,6 +33,13 @@ func main() {
 func run() {
 	fmt.Printf("Running %v as %d\n", os.Args[2:], os.Getpid())
 
+	// Create veth pair (veth-host & veth-cont)
+	exec.Command("ip", "link", "add", "veth-host", "type", "veth", "peer", "name", "veth-cont").Run()
+	// Assign IP on host to veth-host interface
+	exec.Command("ip", "addr", "add", "192.168.100.1/24", "dev", "veth-host").Run()
+	// Bring the veth-host interface up
+	exec.Command("ip", "link", "set", "veth-host", "up").Run()
+
 	// Uses syscalls to execute external commands like execv
 	// Creates structure of command
 	// This creates a new *exec.Cmd object that re-executes the current binary
@@ -44,7 +51,7 @@ func run() {
 	cmd.Stderr = os.Stderr
 
 	// Sets OS specific attributes.
-	// Here, it sets the process to run in a new Unix Timesharing System NAMESPACE | new PID NAMESPACE | new mount NAMESPACE
+	// Here, it sets the process to run in a new Unix Timesharing System NAMESPACE | new PID NAMESPACE | new mount NAMESPACE | new network NAMESPACE
 	// Also unshares any recursively inherited mount properties from host machine
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		// Cloneflags has logical OR to combine the different flags (used in C-style APIs)
@@ -58,16 +65,22 @@ func run() {
 
 	// Reinvoke same process in a new namespace (will run container() now)
 	if err := cmd.Start(); err != nil {
-		log.Fatalf("Failed to start container environment: %v", err)
+		log.Printf("Failed to start container environment: %v", err)
 	}
 
 	// Print the PID from the host's perspective
 	fmt.Printf("Container bootstrap PID on host machine: %d\n", cmd.Process.Pid)
 
+	// Move veth-cont link into container netns (isolates veth-cont from host, so it cannot be found on "ip link" on host)
+	exec.Command("ip", "link", "set", "veth-cont", "netns", strconv.Itoa(cmd.Process.Pid)).Run()
+
 	// Wait after printing
 	if err := cmd.Wait(); err != nil {
-		log.Fatalf("Container process exited: %v", err)
+		log.Printf("Container process exited: %v", err)
 	}
+
+	// Delete the veth created (cleanup)
+	exec.Command("ip", "link", "del", "veth-host").Run()
 
 	fmt.Printf("Container Wrapper has gracefully shutdown!\n")
 }
@@ -139,6 +152,16 @@ func container() {
 	exec.Command("ip", "link", "set", "lo", "up").Run()
 	out, _ := exec.Command("ip", "addr").CombinedOutput()
 	fmt.Printf("ip addr CMD:\n%s\n", string(out))
+
+	// Rename veth-cont link/interface to eth0 (conventional name for primary network interface)
+	exec.Command("ip", "link", "set", "veth-cont", "name", "eth0").Run()
+	// Assign IP to eth0 (with local subnet 192.168.100.0 - 192.168.100.255 including gateway & broadcast)
+	// Any IP outside this is not considered local and needs to access a router -> container can communicate with host without router
+	exec.Command("ip", "addr", "add", "192.168.100.2/24", "dev", "eth0").Run()
+	// Bring the eth0 interface up
+	exec.Command("ip", "link", "set", "eth0", "up").Run()
+	// Sets the default gateway (redirects packets to the given IP if not in routing table) to host
+	exec.Command("ip", "route", "add", "default", "via", "192.168.100.1").Run()
 
 	// This creates a command that will automatically terminate with a notify ctx to the goroutine calling container()
 	cmd := exec.CommandContext(ctx, os.Args[2], os.Args[3:]...) // Need to unpack os.Args[3:], which is a slice, into variadic string parameters

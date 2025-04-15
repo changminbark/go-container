@@ -72,7 +72,11 @@
     ls -l /proc/${PID}/ns/net
     ```
     from the host/parent process.
-10. When you use CLONE_NEWPID, the PID namespace is only fully active for child processes of the process you created with clone().
+10. Veth are virtual links/interfaces between network namespaces, which allow processes in different netns to communicate. 
+    - Assigning an IP to each end (from the same subnet) provide ways for processes to communicate by sending packets to those IP.
+    - Even though they are in separate namespaces, they can still communicate because they are in the same subnet/local network (does not require router).
+    - The container will send packets through the veth to the host's IP (same subnet).
+11. When you use CLONE_NEWPID, the PID namespace is only fully active for child processes of the process you created with clone().
     - So if you start a process with CLONE_NEWPID, that process becomes PID 1 in the new namespace — but doesn’t itself experience full PID isolation behavior. We can still see the process on the host machine.
     - That’s why you also need to spawn another child from within that process. That child will have:
         - PID ≠ 1 in the new namespace
@@ -87,3 +91,7 @@
     docker pull ubuntu
     docker run --rm -it --memory=100M ubuntu /bin/bash
     ```
+
+
+## Resources
+- https://medium.com/@iamssrofficial/linux-namespaces-containers-demystified-prerequisite-for-docker-97b95e515d4a
