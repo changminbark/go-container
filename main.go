@@ -8,9 +8,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
-	"syscall"
+
+	"golang.org/x/sys/unix"
 )
+
+var platform_os string
+var platform_arch string
 
 func main() {
 	if len(os.Args) < 2 {
@@ -31,7 +36,11 @@ func main() {
 
 // Function that runs the wrapper for the container (sets up namespaces for CLONE)
 func run() {
-	fmt.Printf("Running %v as %d\n", os.Args[2:], os.Getpid())
+	platform_os = runtime.GOOS
+	platform_arch = runtime.GOARCH
+	fmt.Printf("\n\nPLATFORM OS IS %s. PLATFORM ARCHITECTURE IS %s\n\n", platform_os, platform_arch)
+
+	fmt.Printf("Run cmd wrapper (%v) PID on host machine: %d\n\n", os.Args[1:], os.Getpid())
 
 	// Create veth pair (veth-host & veth-cont)
 	exec.Command("ip", "link", "add", "veth-host", "type", "veth", "peer", "name", "veth-cont").Run()
@@ -53,11 +62,11 @@ func run() {
 	// Sets OS specific attributes.
 	// Here, it sets the process to run in a new Unix Timesharing System NAMESPACE | new PID NAMESPACE | new mount NAMESPACE | new network NAMESPACE
 	// Also unshares any recursively inherited mount properties from host machine
-	cmd.SysProcAttr = &syscall.SysProcAttr{
+	cmd.SysProcAttr = &unix.SysProcAttr{
 		// Cloneflags has logical OR to combine the different flags (used in C-style APIs)
-		Cloneflags: syscall.CLONE_NEWUTS | syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
+		Cloneflags: unix.CLONE_NEWUTS | unix.CLONE_NEWPID | unix.CLONE_NEWNS | unix.CLONE_NEWNET,
 		// Cannot see container's proc mount and network namespaces in host (see notes)
-		Unshareflags: syscall.CLONE_NEWNS | syscall.CLONE_NEWNET,
+		Unshareflags: unix.CLONE_NEWNS | unix.CLONE_NEWNET,
 	}
 
 	// This ensures killing the main process (main()) will also force the container() process to gracefully shutdown
@@ -69,7 +78,7 @@ func run() {
 	}
 
 	// Print the PID from the host's perspective
-	fmt.Printf("Container bootstrap PID on host machine: %d\n", cmd.Process.Pid)
+	fmt.Printf("Container bootstrap PID on host machine: %d\n\n", cmd.Process.Pid)
 
 	// Move veth-cont link into container netns (isolates veth-cont from host, so it cannot be found on "ip link" on host)
 	exec.Command("ip", "link", "set", "veth-cont", "netns", strconv.Itoa(cmd.Process.Pid)).Run()
@@ -89,7 +98,7 @@ func run() {
 func bootstrap() {
 	// Run the command as a new process in the container namespace
 	if os.Getpid() == 1 {
-		fmt.Printf("We are PID 1 in new PID namespace - now forking actual container process\n")
+		fmt.Printf("We are PID 1 in new PID namespace - now forking actual container process\n\n")
 		cmd := exec.Command("/proc/self/exe", append([]string{"container"}, os.Args[2:]...)...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
@@ -108,10 +117,10 @@ func bootstrap() {
 func container() {
 	// Set up context for receiving SIGINT and SIGTERM for "/proc/self/exe container /bin/bash"
 	// When this process receives a SIGINT/SIGTERM, it will pass SIGKILL to the bash command
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	ctx, stop := signal.NotifyContext(context.Background(), unix.SIGINT, unix.SIGTERM, unix.SIGKILL)
 	defer stop()
 
-	fmt.Printf("Container process running %v as %d\n", os.Args[2:], os.Getpid())
+	fmt.Printf("Container process running %v as %d\n\n", os.Args[2:], os.Getpid())
 
 	// Create cgroup pseudo-filesystem
 	if isCgroupV2() {
@@ -123,23 +132,23 @@ func container() {
 	newRoot := "/home/chang-min/Containers/go-container-ubuntufs"
 
 	// Set the hostname of the new namespace
-	if err := syscall.Sethostname([]byte("container")); err != nil {
+	if err := unix.Sethostname([]byte("container")); err != nil {
 		log.Fatalf("Sethostname failed: %v\n", err)
 		os.Exit(1)
 	}
 	// Set the root of the process namespace to ROOT_FOR_GOCONTAINER
-	if err := syscall.Chroot(newRoot); err != nil {
+	if err := unix.Chroot(newRoot); err != nil {
 		log.Fatalf("Chroot failed: %v\n", err)
 		os.Exit(1)
 	}
 	// Change the working directory to "/" (need this to set the working directory to the new root)
-	if err := syscall.Chdir("/"); err != nil {
+	if err := unix.Chdir("/"); err != nil {
 		log.Fatalf("Chroot failed: %v\n", err)
 		os.Exit(1)
 	}
 	// Mount the /proc pseudo-filesystem (use "proc" instead of "/proc" since in a new root)
 	// However, we can use "/proc" in the target field
-	if err := syscall.Mount("proc", "proc", "proc", 0, ""); err != nil {
+	if err := unix.Mount("proc", "proc", "proc", 0, ""); err != nil {
 		log.Fatalf("/proc mount failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -183,7 +192,7 @@ func container() {
 
 	// Cleanup
 	// Unmount the /proc pseudo-filesystem: we can use "/proc" in the target field
-	if err := syscall.Unmount("proc", 0); err != nil {
+	if err := unix.Unmount("proc", 0); err != nil {
 		log.Printf("/proc unmount failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -200,12 +209,12 @@ func container() {
 
 // Function that checks for the version of Cgroup
 func isCgroupV2() bool {
-	statfs := syscall.Statfs_t{}
-	err := syscall.Statfs("/sys/fs/cgroup", &statfs)
+	statfs := unix.Statfs_t{}
+	err := unix.Statfs("/sys/fs/cgroup", &statfs)
 	if err != nil {
 		return false
 	}
-	return statfs.Type == 0x63677270 // CGROUP2_SUPER_MAGIC
+	return statfs.Type == unix.CGROUP2_SUPER_MAGIC // 0x63677270
 }
 
 // https://docs.kernel.org/admin-guide/cgroup-v2.html
@@ -246,7 +255,7 @@ func cg2() {
 func passSignal(cmd *exec.Cmd) {
 	go func() {
 		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+		signal.Notify(sigs, unix.SIGINT, unix.SIGTERM)
 		for sig := range sigs { // Blocking loop (in case someone spams ctrl+c)
 			if cmd.Process != nil {
 				_ = cmd.Process.Signal(sig)

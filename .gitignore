@@ -1,0 +1,8 @@
+# Binaries
+gocontainer
+rootless_container
+
+# Settings
+.vscode/
+
+
