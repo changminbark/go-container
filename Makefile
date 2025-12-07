@@ -1,10 +1,15 @@
 BINARY = gocontainer
 ROOTLESS = rootless_container
 
-all: build rootless
+all: build
 
-build:
+build: container rootless
+
+container:
 	go build -o $(BINARY) main.go
+
+install:
+	go mod download
 
 run:
 	sudo ./$(BINARY) run /bin/bash
@@ -15,4 +20,4 @@ rootless:
 clean:
 	rm -f $(BINARY) $(ROOTLESS)
 
-.PHONY: all build rootless run clean
+.PHONY: all build container rootless install run clean
